@@ -91,27 +91,69 @@ def _truncate_around_matches(
 ) -> str:
     """
     Truncate a conversation transcript to max_chars, centered around
-    where the query terms appear. Keeps content near matches, trims the edges.
+    the densest cluster of query term matches.
+
+    For multi-word queries, finds the window containing the most DISTINCT
+    query terms — not just the earliest match of any term. This prevents
+    common words (e.g. "interview") from hijacking the window and excluding
+    rarer, more-specific terms (e.g. "Yasin") that may appear later.
     """
     if len(full_text) <= max_chars:
         return full_text
 
-    # Find the first occurrence of any query term
-    query_terms = query.lower().split()
     text_lower = full_text.lower()
-    first_match = len(full_text)
+    query_terms = [t for t in query.lower().split() if t]
+
+    if not query_terms:
+        return full_text[:max_chars]
+
+    # Find all positions of each term. Skip FTS operators/noise.
+    term_positions: Dict[str, List[int]] = {}
     for term in query_terms:
-        pos = text_lower.find(term)
-        if pos != -1 and pos < first_match:
-            first_match = pos
+        if term in ("or", "and", "not"):
+            continue
+        positions = []
+        pos = 0
+        while True:
+            idx = text_lower.find(term, pos)
+            if idx == -1:
+                break
+            positions.append(idx)
+            pos = idx + 1
+        if positions:
+            term_positions[term] = positions
 
-    if first_match == len(full_text):
-        # No match found, take from the start
-        first_match = 0
+    if not term_positions:
+        # No matches found, take from the start
+        return full_text[:max_chars] + "\n\n...[later conversation truncated]..."
 
-    # Center the window around the first match
+    # Score each candidate center position by how many DISTINCT query terms
+    # appear within the window. Higher score = denser cluster of matches.
     half = max_chars // 2
-    start = max(0, first_match - half)
+    best_center = 0
+    best_score = 0
+    best_total_hits = 0  # tiebreaker: total term occurrences in window
+
+    all_positions = sorted({p for positions in term_positions.values() for p in positions})
+    for center in all_positions:
+        window_start = max(0, center - half)
+        window_end = window_start + max_chars
+        distinct_terms = 0
+        total_hits = 0
+        for positions in term_positions.values():
+            in_window = sum(1 for p in positions if window_start <= p < window_end)
+            if in_window:
+                distinct_terms += 1
+                total_hits += in_window
+        if (distinct_terms > best_score) or (
+            distinct_terms == best_score and total_hits > best_total_hits
+        ):
+            best_score = distinct_terms
+            best_total_hits = total_hits
+            best_center = center
+
+    # Center the window around the best match cluster
+    start = max(0, best_center - half)
     end = min(len(full_text), start + max_chars)
     if end - start < max_chars:
         start = max(0, end - max_chars)
