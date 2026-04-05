@@ -5952,6 +5952,29 @@ class AIAgent:
         if self._is_qwen_portal():
             extra_body["vl_high_resolution_images"] = True
 
+        # Custom provider extra_body from config.
+        # Allows custom_providers entries to inject arbitrary params
+        # (e.g. temperature, thinking, response_format) via config.yaml:
+        #   custom_providers:
+        #     - api_key: ...
+        #       base_url: ...
+        #       extra_body:
+        #         temperature: 0.8
+        _cp_base = (self.base_url or "").strip().rstrip("/")
+        if _cp_base:
+            try:
+                from hermes_cli.config import load_config as _load_cp_cfg
+                _cp_cfg = _load_cp_cfg()
+                for _cp_entry in (_cp_cfg.get("custom_providers") or []):
+                    _entry_url = (_cp_entry.get("base_url") or "").strip().rstrip("/")
+                    if _entry_url == _cp_base:
+                        _cp_extra = _cp_entry.get("extra_body")
+                        if isinstance(_cp_extra, dict):
+                            extra_body.update(_cp_extra)
+                        break
+            except Exception:
+                pass
+
         if extra_body:
             api_kwargs["extra_body"] = extra_body
 
