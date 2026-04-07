@@ -106,13 +106,19 @@ def _format_menu(results: List[ScoredResult], max_items: int = 5) -> str:
     for r in results:
         pct = score_to_percent(r.score)
         tier = _get_tier(r.path)
-        display = str(Path(r.path).parent)
-        summary = (r.summary[:80] if r.summary else "")
-        lines.append(f"\u203a {display} [{tier}] ({pct}%) \u2014 {summary}")
+        title = r.title or str(Path(r.path).stem).replace("_", " ")
+        date_str = f" ({r.date})" if r.date else ""
+        imp_str = f" imp:{r.importance}" if r.importance != 50 else ""
+        summary = r.summary[:140] if r.summary else ""
+        # Format: › Title [TIER] (89%) 2026-04-07 imp:85
+        #           summary text here...
+        #           path/to/file.md
+        lines.append(f"\u203a {title} [{tier}] ({pct}%){date_str}{imp_str}")
+        if summary:
+            lines.append(f"  {summary}")
+        lines.append(f"  \u2192 {r.path}")
         paths.append(r.path)
     lines.append('Use chimera_expand("path") to load full content.')
-    for p in paths:
-        lines.append(f"  {p}")
     return "\n".join(lines)
 
 
