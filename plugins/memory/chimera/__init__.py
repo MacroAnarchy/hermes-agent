@@ -81,6 +81,11 @@ def _run_brv(args: List[str], timeout: int = 10) -> dict:
         return {"success": False, "error": str(e)}
 
 
+# Session context — AAAK-style keyword extraction from recent messages
+_SESSION_MESSAGES = []  # rolling buffer of recent user messages
+_SESSION_MAX_MSGS = 10  # keep last N user messages
+_SESSION_KEYWORDS = []  # cached top keywords
+
 # Truth tiers
 TIERS_PATH = Path.home() / ".chimera" / "truth_tiers.json"
 
@@ -178,6 +183,10 @@ class ChimeraMemoryProvider(MemoryProvider):
     def initialize(self, session_id: str, **kwargs) -> None:
         self._session_id = session_id
         self._identity = load_identity() if CHIMERA_AVAILABLE else ""
+        # Reset session context for fresh session
+        global _SESSION_MESSAGES, _SESSION_KEYWORDS
+        _SESSION_MESSAGES = []
+        _SESSION_KEYWORDS = []
 
     def system_prompt_block(self) -> str:
         return (
@@ -194,7 +203,13 @@ class ChimeraMemoryProvider(MemoryProvider):
             return ""
 
         try:
-            results = retrieve(query.strip())
+            # Enrich query with session context (from periodic flush writes)
+            session_ctx = self._read_session_context()
+            enriched_query = query.strip()
+            if session_ctx:
+                enriched_query = f"{session_ctx}\n{enriched_query}"
+
+            results = retrieve(enriched_query)
             filtered = apply_threshold(results)
             if not filtered:
                 return ""  # inject NOTHING — the key innovation
@@ -208,9 +223,15 @@ class ChimeraMemoryProvider(MemoryProvider):
 
     def sync_turn(self, user_content: str, assistant_content: str,
                   *, session_id: str = "") -> None:
-        """Pass to ByteRover for curation (non-blocking)."""
+        """Feed user message to keyword extractor + pass to ByteRover for curation."""
         if not user_content or len(user_content.strip()) < 10:
             return
+
+        # Update session keywords from user message (AAAK extraction)
+        try:
+            self._update_session_context(user_content)
+        except Exception:
+            pass
 
         def _sync():
             try:
@@ -227,10 +248,62 @@ class ChimeraMemoryProvider(MemoryProvider):
         )
         self._sync_thread.start()
 
+    @staticmethod
+    def _extract_session_keywords(text: str, max_keywords: int = 15) -> list:
+        """AAAK-style keyword extraction: frequency + proper noun boosting. Zero LLM."""
+        import re as _re
+        # Re-use stop words from indexer if available, else minimal set
+        try:
+            from chimera.indexer import STOP_WORDS as _SW
+        except ImportError:
+            _SW = {"the", "a", "an", "is", "are", "was", "were", "be", "have", "has",
+                    "had", "do", "does", "did", "will", "would", "could", "should",
+                    "can", "to", "of", "in", "for", "on", "with", "at", "by", "from",
+                    "and", "but", "or", "if", "that", "this", "it", "its", "not",
+                    "also", "just", "very", "really", "well", "back", "still", "way"}
+
+        words = _re.findall(r"[a-zA-Z][a-zA-Z_-]{2,}", text)
+        freq = {}
+        for w in words:
+            wl = w.lower()
+            if wl in _SW or len(wl) < 3:
+                continue
+            freq[wl] = freq.get(wl, 0) + 1
+
+        # Boost proper nouns + CamelCase + underscored terms (AAAK technique)
+        for w in words:
+            wl = w.lower()
+            if wl in _SW:
+                continue
+            if w[0].isupper() and wl in freq:
+                freq[wl] += 2
+            if "_" in w or "-" in w or any(c.isupper() for c in w[1:]):
+                if wl in freq:
+                    freq[wl] += 2
+
+        ranked = sorted(freq.items(), key=lambda x: -x[1])
+        return [w for w, _ in ranked[:max_keywords]]
+
+    def _update_session_context(self, user_msg: str) -> None:
+        """Add user message to rolling buffer and recompute keywords."""
+        global _SESSION_MESSAGES, _SESSION_KEYWORDS
+        _SESSION_MESSAGES.append(user_msg)
+        if len(_SESSION_MESSAGES) > _SESSION_MAX_MSGS:
+            _SESSION_MESSAGES = _SESSION_MESSAGES[-_SESSION_MAX_MSGS:]
+        # Recompute keywords from all buffered messages
+        combined = " ".join(_SESSION_MESSAGES)
+        _SESSION_KEYWORDS = self._extract_session_keywords(combined)
+
+    def _read_session_context(self) -> str:
+        """Return cached session keywords as space-separated string."""
+        global _SESSION_KEYWORDS
+        return " ".join(_SESSION_KEYWORDS)
+
     def on_memory_write(self, action: str, target: str, content: str) -> None:
         """Mirror built-in memory writes to ByteRover."""
         if action not in ("add", "replace") or not content:
             return
+        # Mirror to ByteRover (non-blocking)
         def _write():
             try:
                 label = "User profile" if target == "user" else "Agent memory"
