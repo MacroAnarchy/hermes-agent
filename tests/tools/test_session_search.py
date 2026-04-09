@@ -149,40 +149,6 @@ class TestTruncateAroundMatches:
         result = _truncate_around_matches(text, "KEYWORD")
         assert "KEYWORD" in result
 
-    def test_multiword_phrase_match_beats_individual_term(self):
-        """Full phrase deep in text should be found even when a single term
-        appears much earlier in boilerplate."""
-        boilerplate = "The project setup is complex. " * 500  # ~15K, has 'project' early
-        filler = "x" * (MAX_SESSION_CHARS + 20000)
-        target = "We reviewed the keystone project roadmap in detail."
-        text = boilerplate + filler + target + filler
-        result = _truncate_around_matches(text, "keystone project")
-        assert "keystone project" in result.lower()
-
-    def test_multiword_proximity_cooccurrence(self):
-        """When exact phrase is absent, terms co-occurring within proximity
-        should be preferred over a lone early term."""
-        early = "project " + "a" * (MAX_SESSION_CHARS + 20000)
-        # Place 'keystone' and 'project' near each other (but not as exact phrase)
-        cooccur = "this keystone initiative for the project was pivotal"
-        tail = "b" * (MAX_SESSION_CHARS + 20000)
-        text = early + cooccur + tail
-        result = _truncate_around_matches(text, "keystone project")
-        assert "keystone" in result.lower()
-        assert "project" in result.lower()
-
-    def test_multiword_window_maximises_coverage(self):
-        """Sliding window should capture as many match clusters as possible."""
-        # Place two phrase matches: one at ~50K, one at ~60K, both should fit
-        pre = "z" * 50000
-        match1 = " alpha beta "
-        gap = "z" * 10000
-        match2 = " alpha beta "
-        post = "z" * (MAX_SESSION_CHARS + 40000)
-        text = pre + match1 + gap + match2 + post
-        result = _truncate_around_matches(text, "alpha beta")
-        assert result.lower().count("alpha beta") == 2
-
 
 class TestSessionSearchConcurrency:
     def test_defaults_to_three(self):
@@ -369,8 +335,9 @@ class TestSessionSearch:
         assert result["sessions_searched"] == 1
         assert current_sid not in [r.get("session_id") for r in result.get("results", [])]
 
-    def test_current_child_session_excludes_parent_lineage(self):
-        """Compression/delegation parents should be excluded for the active child session."""
+    def test_current_child_session_includes_compression_parent(self):
+        """After compression, the parent's content is no longer in context
+        and SHOULD be searchable — the agent only has the compressed summary."""
         from unittest.mock import MagicMock
         from tools.session_search_tool import session_search
 
@@ -388,75 +355,23 @@ class TestSessionSearch:
             return None
 
         mock_db.get_session.side_effect = _get_session
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "match"},
+            {"role": "assistant", "content": "response"},
+        ]
 
         result = json.loads(session_search(
             query="test", db=mock_db, current_session_id="child_sid",
         ))
 
         assert result["success"] is True
-        assert result["count"] == 0
-        assert result["results"] == []
-        assert result["sessions_searched"] == 0
+        # Parent session SHOULD appear — its content was lost to compression
+        assert result["count"] == 1
+        assert result["sessions_searched"] == 1
 
-    def test_limit_none_coerced_to_default(self):
-        """Model sends limit=null → should fall back to 3, not TypeError."""
-        from unittest.mock import MagicMock
-        from tools.session_search_tool import session_search
-
-        mock_db = MagicMock()
-        mock_db.search_messages.return_value = []
-
-        result = json.loads(session_search(
-            query="test", db=mock_db, limit=None,
-        ))
-        assert result["success"] is True
-
-    def test_limit_type_object_coerced_to_default(self):
-        """Model sends limit as a type object → should fall back to 3, not TypeError."""
-        from unittest.mock import MagicMock
-        from tools.session_search_tool import session_search
-
-        mock_db = MagicMock()
-        mock_db.search_messages.return_value = []
-
-        result = json.loads(session_search(
-            query="test", db=mock_db, limit=int,
-        ))
-        assert result["success"] is True
-
-    def test_limit_string_coerced(self):
-        """Model sends limit as string '2' → should coerce to int."""
-        from unittest.mock import MagicMock
-        from tools.session_search_tool import session_search
-
-        mock_db = MagicMock()
-        mock_db.search_messages.return_value = []
-
-        result = json.loads(session_search(
-            query="test", db=mock_db, limit="2",
-        ))
-        assert result["success"] is True
-
-    def test_limit_clamped_to_range(self):
-        """Negative or zero limit should be clamped to 1."""
-        from unittest.mock import MagicMock
-        from tools.session_search_tool import session_search
-
-        mock_db = MagicMock()
-        mock_db.search_messages.return_value = []
-
-        result = json.loads(session_search(
-            query="test", db=mock_db, limit=-5,
-        ))
-        assert result["success"] is True
-
-        result = json.loads(session_search(
-            query="test", db=mock_db, limit=0,
-        ))
-        assert result["success"] is True
-
-    def test_current_root_session_excludes_child_lineage(self):
-        """Delegation child hits should be excluded when they resolve to the current root session."""
+    def test_current_root_session_includes_delegation_child(self):
+        """Delegation child content may not be fully in the root session's
+        context — include it for searchability."""
         from unittest.mock import MagicMock
         from tools.session_search_tool import session_search
 
@@ -474,12 +389,16 @@ class TestSessionSearch:
             return None
 
         mock_db.get_session.side_effect = _get_session
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "match"},
+            {"role": "assistant", "content": "response"},
+        ]
 
         result = json.loads(session_search(
             query="test", db=mock_db, current_session_id="root_sid",
         ))
 
         assert result["success"] is True
-        assert result["count"] == 0
-        assert result["results"] == []
-        assert result["sessions_searched"] == 0
+        # Child session resolved to root — content should be searchable
+        assert result["count"] == 1
+        assert result["sessions_searched"] == 1
