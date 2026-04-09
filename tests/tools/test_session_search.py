@@ -227,8 +227,9 @@ class TestSessionSearch:
         assert result["sessions_searched"] == 1
         assert current_sid not in [r.get("session_id") for r in result.get("results", [])]
 
-    def test_current_child_session_excludes_parent_lineage(self):
-        """Compression/delegation parents should be excluded for the active child session."""
+    def test_current_child_session_includes_compression_parent(self):
+        """After compression, the parent's content is no longer in context
+        and SHOULD be searchable — the agent only has the compressed summary."""
         from unittest.mock import MagicMock
         from tools.session_search_tool import session_search
 
@@ -246,18 +247,23 @@ class TestSessionSearch:
             return None
 
         mock_db.get_session.side_effect = _get_session
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "match"},
+            {"role": "assistant", "content": "response"},
+        ]
 
         result = json.loads(session_search(
             query="test", db=mock_db, current_session_id="child_sid",
         ))
 
         assert result["success"] is True
-        assert result["count"] == 0
-        assert result["results"] == []
-        assert result["sessions_searched"] == 0
+        # Parent session SHOULD appear — its content was lost to compression
+        assert result["count"] == 1
+        assert result["sessions_searched"] == 1
 
-    def test_current_root_session_excludes_child_lineage(self):
-        """Delegation child hits should be excluded when they resolve to the current root session."""
+    def test_current_root_session_includes_delegation_child(self):
+        """Delegation child content may not be fully in the root session's
+        context — include it for searchability."""
         from unittest.mock import MagicMock
         from tools.session_search_tool import session_search
 
@@ -275,12 +281,16 @@ class TestSessionSearch:
             return None
 
         mock_db.get_session.side_effect = _get_session
+        mock_db.get_messages_as_conversation.return_value = [
+            {"role": "user", "content": "match"},
+            {"role": "assistant", "content": "response"},
+        ]
 
         result = json.loads(session_search(
             query="test", db=mock_db, current_session_id="root_sid",
         ))
 
         assert result["success"] is True
-        assert result["count"] == 0
-        assert result["results"] == []
-        assert result["sessions_searched"] == 0
+        # Child session resolved to root — content should be searchable
+        assert result["count"] == 1
+        assert result["sessions_searched"] == 1
