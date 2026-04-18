@@ -3896,6 +3896,18 @@ class GatewayRunner:
 
                     _hyg_meta = {"thread_id": source.thread_id} if source.thread_id else None
 
+                    # Notify user that compression is about to happen
+                    try:
+                        _adapter = self.adapters.get(source.platform)
+                        if _adapter:
+                            await _adapter.send(
+                                source.chat_id,
+                                f"🗜️ Session is large ({_msg_count} messages, ~{_approx_tokens:,} tokens) — compressing...",
+                                metadata=_hyg_meta,
+                            )
+                    except Exception:
+                        pass
+
                     try:
                         from run_agent import AIAgent
 
@@ -3960,6 +3972,18 @@ class GatewayRunner:
                                         _msg_count, _new_count,
                                         f"{_approx_tokens:,}", f"{_new_tokens:,}",
                                     )
+
+                                    # Notify user that compression completed
+                                    try:
+                                        _adapter = self.adapters.get(source.platform)
+                                        if _adapter:
+                                            await _adapter.send(
+                                                source.chat_id,
+                                                f"🗜️ Session compressed: {_msg_count} → {_new_count} messages",
+                                                metadata=_hyg_meta,
+                                            )
+                                    except Exception:
+                                        pass
 
                                     if _new_tokens >= _warn_token_threshold:
                                         logger.warning(
