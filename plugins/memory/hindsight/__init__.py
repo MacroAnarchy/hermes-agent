@@ -447,11 +447,19 @@ class HindsightMemoryProvider(MemoryProvider):
                     llm_provider = "openai"
                 logger.debug("Creating HindsightEmbedded client (profile=%s, provider=%s)",
                              self._config.get("profile", "hermes"), llm_provider)
+                # Resolve API key: config.json < profile .env < Hermes .env < env vars
+                llm_api_key = (
+                    self._config.get("llmApiKey")
+                    or self._config.get("llm_api_key")
+                    or os.environ.get("HINDSIGHT_API_LLM_API_KEY", "")
+                    or os.environ.get("HINDSIGHT_LLM_API_KEY", "")
+                )
                 kwargs = dict(
                     profile=self._config.get("profile", "hermes"),
                     llm_provider=llm_provider,
-                    llm_api_key=self._config.get("llmApiKey") or self._config.get("llm_api_key") or os.environ.get("HINDSIGHT_LLM_API_KEY", ""),
+                    llm_api_key=llm_api_key,
                     llm_model=self._config.get("llm_model", ""),
+                    idle_timeout=int(self._config.get("idle_timeout", 86400)),
                 )
                 if self._llm_base_url:
                     kwargs["llm_base_url"] = self._llm_base_url
