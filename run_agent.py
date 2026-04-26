@@ -9350,7 +9350,12 @@ class AIAgent:
             try:
                 _query = original_user_message if isinstance(original_user_message, str) else ""
                 _ext_prefetch_cache = self._memory_manager.prefetch_all(_query) or ""
-            except Exception:
+                if _ext_prefetch_cache:
+                    logger.info("Memory prefetch: %d chars injected for query '%.50s...'", len(_ext_prefetch_cache), _query[:50])
+                else:
+                    logger.info("Memory prefetch: EMPTY for query '%.50s...'", _query[:50])
+            except Exception as e:
+                logger.warning("Memory prefetch failed: %s", e)
                 pass
 
         while (api_call_count < self.max_iterations and self.iteration_budget.remaining > 0) or self._budget_grace_call:
