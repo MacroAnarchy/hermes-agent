@@ -147,6 +147,7 @@ _PROVIDER_ALIASES = {
     "gmicloud": "gmi",
     "minimax-china": "minimax-cn",
     "minimax_cn": "minimax-cn",
+    "openai": "openai-codex",
     "claude": "anthropic",
     "claude-code": "anthropic",
     "github": "copilot",
