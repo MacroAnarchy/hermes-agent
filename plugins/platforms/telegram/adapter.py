@@ -7193,40 +7193,14 @@ class TelegramAdapter(BasePlatformAdapter):
 
     async def on_processing_start(self, event: MessageEvent) -> None:
         """Add an in-progress reaction when message processing begins."""
-        if not self._reactions_enabled():
-            return
-        chat_id = getattr(event.source, "chat_id", None)
-        message_id = getattr(event, "message_id", None)
-        if chat_id and message_id:
-            await self._set_reaction(chat_id, message_id, "\U0001f440")
+        return  # auto-ack disabled — keep manual reactions only
 
     async def on_processing_complete(self, event: MessageEvent, outcome: ProcessingOutcome) -> None:
         """Swap the in-progress reaction for a final success/failure reaction.
 
-        Unlike Discord (additive reactions), Telegram's set_message_reaction
-        replaces all existing reactions in one call — no remove step needed.
-
-        On CANCELLED outcomes (e.g. the user runs ``/stop``, or a session is
-        interrupted mid-flight), we explicitly clear the 👀 in-progress
-        reaction so it doesn't linger on the user's message indefinitely.
-        Without this clear, the only way to remove the 👀 was to wait for
-        another agent run to swap it to 👍/👎 — which never happens if the
-        cancellation was the last activity in the chat.
+        Auto-ack reactions DISABLED — keep manual reactions only.
         """
-        if not self._reactions_enabled():
-            return
-        chat_id = getattr(event.source, "chat_id", None)
-        message_id = getattr(event, "message_id", None)
-        if not (chat_id and message_id):
-            return
-        if outcome == ProcessingOutcome.CANCELLED:
-            await self._clear_reactions(chat_id, message_id)
-        else:
-            await self._set_reaction(
-                chat_id,
-                message_id,
-                "\U0001f44d" if outcome == ProcessingOutcome.SUCCESS else "\U0001f44e",
-            )
+        return
 
 
 # ──────────────────────────────────────────────────────────────────────────
