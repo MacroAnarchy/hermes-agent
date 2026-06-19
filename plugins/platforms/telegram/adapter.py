@@ -7192,8 +7192,19 @@ class TelegramAdapter(BasePlatformAdapter):
             return False
 
     async def on_processing_start(self, event: MessageEvent) -> None:
-        """Add an in-progress reaction when message processing begins."""
-        return  # auto-ack disabled — keep manual reactions only
+        """Save last incoming message for manual reactions (auto-ack disabled)."""
+        chat_id = getattr(event.source, "chat_id", None)
+        message_id = getattr(event, "message_id", None)
+        if chat_id and message_id:
+            import json, os
+            try:
+                state_dir = os.path.expanduser("~/.hermes/cache")
+                os.makedirs(state_dir, exist_ok=True)
+                with open(os.path.join(state_dir, "telegram_last_msg.json"), "w") as f:
+                    json.dump({"chat_id": str(chat_id), "message_id": str(message_id)}, f)
+            except Exception:
+                pass
+        return
 
     async def on_processing_complete(self, event: MessageEvent, outcome: ProcessingOutcome) -> None:
         """Swap the in-progress reaction for a final success/failure reaction.
